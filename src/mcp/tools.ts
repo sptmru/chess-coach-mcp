@@ -79,8 +79,18 @@ export function toolDefinitions(s: Services) {
       .default(Math.min(3, s.config.MAX_MULTIPV)),
   };
   const provider = {
-    provider: z.enum(['mock', 'openai', 'gemini', 'jev']).optional(),
-    model: z.string().min(1).max(100).optional(),
+    provider: z
+      .enum(s.semantics.approved().map((r) => r.provider))
+      .default(s.semantics.configured.provider)
+      .describe(
+        'Omit to use REASONER_PROVIDER from the server environment. Use mock only for an explicit deterministic comparison.',
+      ),
+    model: z
+      .string()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe('Omit to use the server-configured model for the selected provider.'),
   };
   const enqueueAnalysis = async (
     ctx: RequestContext,
@@ -308,14 +318,14 @@ export function toolDefinitions(s: Services) {
   );
   add(
     'classify_critical_position',
-    'Classify one owned critical position with approved provider. Explicit opt-in to configured remote reasoner; defaults to deterministic when disabled.',
+    'Classify one owned critical position using the server-configured provider and model. Omit provider and model for normal use. Explicit opt-in to configured remote reasoner; defaults to deterministic when disabled.',
     { ...identity, positionId: uuid, ...provider },
     (a, c) => s.semantics.classify(c.userId, a.identityId, a.positionId, a.provider, a.model),
     false,
   );
   add(
     'classify_game_positions',
-    'Queue bounded classification of a game’s grouped positions.',
+    'Queue bounded classification of a game’s grouped positions using the server-configured provider and model. Omit provider and model for normal use.',
     {
       ...identity,
       gameId: uuid,
@@ -324,6 +334,7 @@ export function toolDefinitions(s: Services) {
       retry: z.boolean().default(false),
     },
     async (a, c) => {
+      const selected = s.semantics.resolveReasoner(a.provider, a.model);
       const i = await s.identity.require(c.userId, a.identityId);
       const critical = await s.analysis.critical(c.userId, i.id, a.gameId, undefined, a.count);
       const positionIds = critical.items.map((p) => p.id);
@@ -331,11 +342,11 @@ export function toolDefinitions(s: Services) {
         c.userId,
         i.id,
         'classification',
-        { positionIds, provider: a.provider, model: a.model },
+        { positionIds, provider: selected.provider, model: selected.model },
         hash({
           positionIds,
-          provider: a.provider ?? s.semantics.configured.provider,
-          model: a.model ?? s.semantics.configured.model,
+          provider: selected.provider,
+          model: selected.model,
           retry: a.retry ? randomUUID() : undefined,
         }),
         c.correlationId,

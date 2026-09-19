@@ -67,7 +67,7 @@ Call these tools in sequence through your client:
 {"name":"get_analysis_status","arguments":{"jobId":"UUID_FROM_ANALYSIS"}}
 {"name":"get_player_report","arguments":{}}
 {"name":"get_critical_positions","arguments":{"gameId":"GAME_UUID"}}
-{"name":"classify_game_positions","arguments":{"gameId":"GAME_UUID","provider":"mock"}}
+{"name":"classify_game_positions","arguments":{"gameId":"GAME_UUID"}}
 {"name":"get_mistake_patterns","arguments":{}}
 {"name":"create_training_set","arguments":{"count":5}}
 {"name":"get_training_position_solution","arguments":{"exerciseId":"EXERCISE_UUID"}}
@@ -97,6 +97,8 @@ Default responses omit full PGNs, complete move arrays, and raw provider respons
 The complete catalog of 44 tools is in [src/mcp/tools.ts](src/mcp/tools.ts). Architecture, evaluation conventions, and limitations are documented in [docs/architecture.md](docs/architecture.md).
 
 ## Semantic providers
+
+For normal classification calls, omit `provider` and `model`: the server uses `REASONER_PROVIDER` and `REASONER_MODEL` from its environment (`.env` in Docker Compose). The MCP schema advertises only the configured provider and `mock`, with the configured provider as its default. Unsupported provider/model selections are rejected before a classification job is queued. Jobs store the resolved provider and model. After changing `.env`, recreate the app container and refresh the client's tool catalog.
 
 Without API keys, use `REASONER_PROVIDER=disabled`: all objective reports remain available, and explicit classification requests use `MockReasoner` with conservative deterministic rules. Its labels are not random. LLM calls do not run automatically after engine analysis.
 

@@ -24,6 +24,12 @@ export class SemanticService {
       ...new Map([new MockReasoner(), this.configured].map((r) => [r.provider, r])).values(),
     ].map((r) => ({ provider: r.provider, model: r.model }));
   }
+  resolveReasoner(provider?: string, model?: string): PositionReasoner {
+    const r = provider === 'mock' ? new MockReasoner() : this.configured;
+    if ((provider && r.provider !== provider) || (model && r.model !== model))
+      throw new DomainError('provider_not_allowed', 'Choose a server-approved provider and model');
+    return r;
+  }
   async classify(
     userId: string,
     identityId: string | undefined,
@@ -32,9 +38,7 @@ export class SemanticService {
     model?: string,
   ) {
     const p = await this.analysis.position(userId, identityId, positionId);
-    const r: PositionReasoner = provider === 'mock' ? new MockReasoner() : this.configured;
-    if ((provider && r.provider !== provider) || (model && r.model !== model))
-      throw new DomainError('provider_not_allowed', 'Choose a server-approved provider and model');
+    const r = this.resolveReasoner(provider, model);
     const context = {
       move: p.move,
       features: features(p.move),
