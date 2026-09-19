@@ -4,6 +4,7 @@ import { ChessComClient } from '../chesscom/client.js';
 import { EnginePool } from '../stockfish/engine.js';
 import { JobQueue } from '../jobs/queue.js';
 import { analysisHandler } from '../jobs/analysis.js';
+import { DAILY_JOB_TYPE, dailyAnalysisHandler, DailyAnalysisScheduler } from '../jobs/daily.js';
 import { IdentityService } from './identity.js';
 import { GameService } from './games.js';
 import { AnalysisService } from './analysis.js';
@@ -27,6 +28,8 @@ export function createServices(
     coaching = new CoachingService(db, identity, reports),
     training = new TrainingService(db, reports, semantics),
     jobs = new JobQueue(db, pool, config.JOB_CONCURRENCY);
+  const daily = new DailyAnalysisScheduler(db, jobs, config, analysis, semantics);
+  jobs.register(DAILY_JOB_TYPE, dailyAnalysisHandler(db, games, analysis, semantics));
   jobs.register('sync', async (j, c) =>
     games.sync(
       j.userId,
@@ -77,11 +80,14 @@ export function createServices(
     coaching,
     training,
     jobs,
+    daily,
     async start() {
       await engine.start();
       await jobs.start();
+      daily.start();
     },
     async close() {
+      await daily.close();
       await jobs.close();
       await engine.close();
       await pool.end();

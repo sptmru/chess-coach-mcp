@@ -15,6 +15,7 @@ import { users, games, analysisRuns, jobs, identities, notes } from '../src/data
 import { passwordHash } from '../src/auth/provider.js';
 import { toolDefinitions } from '../src/mcp/tools.js';
 import { secret, sleep } from '../src/utils/core.js';
+import { DAILY_JOB_TYPE, DailyAnalysisScheduler } from '../src/jobs/daily.js';
 let s: Services,
   server: Server,
   base: string,
@@ -347,6 +348,42 @@ describe.sequential('PostgreSQL + Stockfish acceptance', () => {
     await s.jobs.cancel(u1, cancel.id);
     expect(await wait(cancel.id)).toMatchObject({ state: 'cancelled' });
   });
+  it('schedules daily jobs durably and executes sync, date selection and classification', async () => {
+    const now = new Date('2026-09-02T23:00:00Z');
+    await s.daily.tick(now);
+    const queued = await s.db.select().from(jobs).where(eq(jobs.type, DAILY_JOB_TYPE));
+    expect(queued).toHaveLength(2);
+    for (const entry of queued) {
+      for (let n = 0; n < 200; n++) {
+        const current = await s.jobs.get(entry.userId, entry.id);
+        if (['succeeded', 'failed', 'cancelled'].includes(current.state)) break;
+        await sleep(100);
+      }
+      expect(await s.jobs.get(entry.userId, entry.id)).toMatchObject({
+        state: 'succeeded',
+        failed: 0,
+      });
+    }
+    const own = queued.find((j) => j.userId === u1)!;
+    expect(await s.jobs.get(u1, own.id)).toMatchObject({
+      total: 1,
+      completed: 1,
+      result: { date: '2026-09-02', analyzed: 1, partial: false },
+    });
+    expect(
+      ((await s.jobs.get(u1, own.id)).result as { classified: number }).classified,
+    ).toBeGreaterThan(0);
+    const other = queued.find((j) => j.userId === u2)!;
+    expect(await s.jobs.get(u2, other.id)).toMatchObject({
+      total: 1,
+      completed: 1,
+      result: { analyzed: 1, runs: [{ reused: true }] },
+    });
+    const restarted = new DailyAnalysisScheduler(s.db, s.jobs, s.config, s.analysis, s.semantics);
+    await restarted.tick(now);
+    expect(await s.db.select().from(jobs).where(eq(jobs.type, DAILY_JOB_TYPE))).toHaveLength(2);
+    await expect(s.jobs.get(u2, own.id)).rejects.toThrow();
+  });
   it('deleting an association cascades personal state without deleting shared games or analysis', async () => {
     const disposable = await s.identity.associate(u2, 'fixture-white');
     const note = await s.coaching.addNote(u2, disposable.id, { note: 'will be deleted' });
@@ -550,6 +587,7 @@ it('serves clean stdio protocol and exits on client EOF', async () => {
       ...process.env,
       DATABASE_URL: s.config.DATABASE_URL,
       STDIO_USER_ID: u1,
+      DAILY_ANALYSIS_ENABLED: 'false',
       STOCKFISH_PATH: s.config.STOCKFISH_PATH,
       LOG_LEVEL: 'silent',
     },

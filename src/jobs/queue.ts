@@ -24,6 +24,9 @@ export class JobQueue {
   register(type: string, handler: JobHandler) {
     this.handlers.set(type, handler);
   }
+  get isRunning() {
+    return !!this.lease && !this.stopping;
+  }
   async start() {
     this.lease = await this.pool.connect();
     const lock = await this.lease.query('select pg_try_advisory_lock(624681903) as locked');

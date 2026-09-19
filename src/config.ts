@@ -24,6 +24,11 @@ const schema = z.object({
   JOB_CONCURRENCY: positive(1, 4),
   MAX_ANALYSIS_GAMES: positive(10, 50),
   MAX_BATCH_ANALYSIS_GAMES: positive(500, 500),
+  DAILY_ANALYSIS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+  DAILY_ANALYSIS_POSITIONS_PER_GAME: positive(10, 20),
   CHESSCOM_USER_AGENT: z.string().default('ChessCoachMCP/0.1 (self-hosted personal analytics)'),
   REASONER_PROVIDER: z.enum(['disabled', 'mock', 'openai', 'gemini', 'jev']).default('disabled'),
   REASONER_MODEL: z.string().default(''),

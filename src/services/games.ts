@@ -77,6 +77,7 @@ export class GameService {
     months: number,
     progress: (done: number, total: number, failed: number) => Promise<void>,
     cancelled: () => Promise<void>,
+    period?: { since: string; until: string },
   ) {
     const identity = await this.identity.require(userId, identityId);
     const list = await this.upstream.request(`/pub/player/${identity.username}/games/archives`);
@@ -89,9 +90,15 @@ export class GameService {
       .filter((u) => {
         const m =
           /^https:\/\/api\.chess\.com\/pub\/player\/[a-z0-9_-]+\/games\/(\d{4})\/(\d{2})$/i.exec(u);
-        return m && new Date(`${m[1]}-${m[2]}-01T00:00:00Z`) >= cutoff;
+        if (!m) return false;
+        const start = new Date(`${m[1]}-${m[2]}-01T00:00:00Z`);
+        const end = new Date(start);
+        end.setUTCMonth(end.getUTCMonth() + 1);
+        return period
+          ? start <= new Date(period.until) && end > new Date(period.since)
+          : start >= cutoff;
       })
-      .slice(-months);
+      .slice(period ? 0 : -months);
     let imported = 0,
       deduplicated = 0,
       failed = 0,
@@ -117,7 +124,8 @@ export class GameService {
               if (result?.imported) imported++;
               else deduplicated++;
             } catch (e) {
-              if (e instanceof DomainError && e.code === 'cancelled') throw e;
+              if (e instanceof DomainError && ['cancelled', 'interrupted'].includes(e.code))
+                throw e;
               archiveErrors++;
             }
           }
@@ -147,7 +155,7 @@ export class GameService {
           }
         }
       } catch (e) {
-        if (e instanceof DomainError && e.code === 'cancelled') throw e;
+        if (e instanceof DomainError && ['cancelled', 'interrupted'].includes(e.code)) throw e;
         failed++;
         warnings.push(`${url.split('/').slice(-2).join('/')}: archive unavailable`);
       }

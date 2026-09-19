@@ -120,11 +120,29 @@ Default responses omit full PGNs, complete move arrays, and raw provider respons
 
 The complete catalog of 46 tools is in [src/mcp/tools.ts](src/mcp/tools.ts). Architecture, evaluation conventions, and limitations are documented in [docs/architecture.md](docs/architecture.md).
 
+## Daily analysis at 03:00 Yerevan
+
+`DAILY_ANALYSIS_ENABLED=true` (the default) schedules one persistent `daily_analysis_classification` job per linked Chess.com identity each day at **03:00 Asia/Yerevan**. The scheduler checks every 30 seconds; work starts when the existing worker has capacity. Set `DAILY_ANALYSIS_ENABLED=false` to disable new scheduled jobs (already queued jobs remain).
+
+Each job syncs the Chess.com archives covering the previous **local calendar day**, then analyzes and classifies Rapid games by their completion time. For example, the September 20 run selects September 19, 00:00:00–23:59:59.999 Yerevan time. Both UTC archive months are fetched when that local day crosses a month boundary. [Yerevan observes UTC+04:00 year-round](https://www.timeanddate.com/time/zone/armenia/yerevan).
+
+The job uses `ANALYSIS_DEPTH`, up to three MultiPV lines within `MAX_MULTIPV`, `MAX_BATCH_ANALYSIS_GAMES`, and the configured reasoner/model. `DAILY_ANALYSIS_POSITIONS_PER_GAME` defaults to 10 (maximum 20); additional critical positions are disclosed through each game's `nextOffset`. Enabling this schedule authorizes automatic classification with the configured provider, including its API costs. With `REASONER_PROVIDER=disabled`, classification uses deterministic mock rules.
+
+Daily jobs share existing queue limits and cancellation/progress APIs. The structured `Daily analysis scheduled` log includes the job ID for `get_job` / `get_analysis_status`. A day without games succeeds with `skipped: "no_matching_games"`. Sync failures stop the job before taking an incomplete selection. Analysis/classification failures retain the existing per-game results and partial-failure counts.
+
+Repeated polls and restarts reuse the same identity/day job, even after failure or cancellation. Interrupted jobs resume from their saved game selection and reuse completed analyses/classifications. When started after 03:00, the scheduler catches up that day's run; it does not backfill older missed days. Queue-capacity errors retry on subsequent polls. To retry a failed day or backfill an older period, run `sync_games`, then `analyze_and_classify_games` with the day's ISO timestamp bounds and `retry: true`.
+
+Rebuild/recreate the application to activate this change; no database migration or host cron entry is required:
+
+```bash
+docker compose up -d --build app
+```
+
 ## Semantic providers
 
 For normal classification calls, omit `provider` and `model`: the server uses `REASONER_PROVIDER` and `REASONER_MODEL` from its environment (`.env` in Docker Compose). The MCP schema advertises only the configured provider and `mock`, with the configured provider as its default. Unsupported provider/model selections are rejected before a classification job is queued. Jobs store the resolved provider and model. After changing `.env`, recreate the app container and refresh the client's tool catalog.
 
-Without API keys, use `REASONER_PROVIDER=disabled`: all objective reports remain available, and explicit classification requests use `MockReasoner` with conservative deterministic rules. Its labels are not random. LLM calls do not run automatically after engine analysis.
+Without API keys, use `REASONER_PROVIDER=disabled`: all objective reports remain available, and classification requests use `MockReasoner` with conservative deterministic rules. Its labels are not random. Analysis-only jobs do not call an LLM; the daily schedule and explicitly requested analysis/classification pipelines also run classification.
 
 To use a remote provider, set `REASONER_PROVIDER=openai` + `OPENAI_API_KEY` + `REASONER_MODEL`, or `gemini` + `GEMINI_API_KEY` + `REASONER_MODEL`. The operator selects the model, not the MCP client.
 
