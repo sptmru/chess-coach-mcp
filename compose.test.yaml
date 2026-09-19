@@ -1,0 +1,30 @@
+name: chess-coach-test
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: chess_test
+      POSTGRES_PASSWORD: isolated-fixture-password
+      POSTGRES_DB: chess_coach_test
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U chess_test -d chess_coach_test]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  test:
+    build: { context: ., target: test }
+    environment:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://chess_test:isolated-fixture-password@db:5432/chess_coach_test
+      TEST_DATABASE_URL: postgresql://chess_test:isolated-fixture-password@db:5432/chess_coach_test
+      STOCKFISH_PATH: /usr/games/stockfish
+      LOG_LEVEL: silent
+    depends_on:
+      db: { condition: service_healthy }
+    command:
+      [
+        sh,
+        -c,
+        'npm run typecheck && npm run lint && npm test && npm run test:integration && npm run build',
+      ]

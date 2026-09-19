@@ -1,0 +1,13 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit, integration, OAuth, build and type checks
+        run: docker compose -f compose.test.yaml run --build --rm test
+      - name: Cleanup fixture database
+        if: always()
+        run: docker compose -f compose.test.yaml down

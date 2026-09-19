@@ -1,0 +1,21 @@
+CREATE UNIQUE INDEX "identity_owner_pair" ON "user_chess_players" USING btree ("id","user_id");--> statement-breakpoint
+ALTER TABLE "training_attempts" ADD CONSTRAINT "training_attempts_identity_id_user_id_user_chess_players_id_user_id_fk" FOREIGN KEY ("identity_id","user_id") REFERENCES "public"."user_chess_players"("id","user_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "semantic_classifications" ADD CONSTRAINT "semantic_classifications_identity_id_user_id_user_chess_players_id_user_id_fk" FOREIGN KEY ("identity_id","user_id") REFERENCES "public"."user_chess_players"("id","user_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "training_exercises" ADD CONSTRAINT "training_exercises_identity_id_user_id_user_chess_players_id_user_id_fk" FOREIGN KEY ("identity_id","user_id") REFERENCES "public"."user_chess_players"("id","user_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "training_focuses" ADD CONSTRAINT "training_focuses_identity_id_user_id_user_chess_players_id_user_id_fk" FOREIGN KEY ("identity_id","user_id") REFERENCES "public"."user_chess_players"("id","user_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "goals" ADD CONSTRAINT "goals_identity_id_user_id_user_chess_players_id_user_id_fk" FOREIGN KEY ("identity_id","user_id") REFERENCES "public"."user_chess_players"("id","user_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "jobs" ADD CONSTRAINT "jobs_identity_id_user_id_user_chess_players_id_user_id_fk" FOREIGN KEY ("identity_id","user_id") REFERENCES "public"."user_chess_players"("id","user_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "coaching_notes" ADD CONSTRAINT "coaching_notes_identity_id_user_id_user_chess_players_id_user_id_fk" FOREIGN KEY ("identity_id","user_id") REFERENCES "public"."user_chess_players"("id","user_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "mistake_patterns" ADD CONSTRAINT "mistake_patterns_identity_id_user_id_user_chess_players_id_user_id_fk" FOREIGN KEY ("identity_id","user_id") REFERENCES "public"."user_chess_players"("id","user_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "coaching_profiles" ADD CONSTRAINT "coaching_profiles_identity_id_user_id_user_chess_players_id_user_id_fk" FOREIGN KEY ("identity_id","user_id") REFERENCES "public"."user_chess_players"("id","user_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "training_sets" ADD CONSTRAINT "training_sets_identity_id_user_id_user_chess_players_id_user_id_fk" FOREIGN KEY ("identity_id","user_id") REFERENCES "public"."user_chess_players"("id","user_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "training_attempts_user_id_identity_id_index" ON "training_attempts" USING btree ("user_id","identity_id");--> statement-breakpoint
+CREATE INDEX "semantic_classifications_user_id_identity_id_index" ON "semantic_classifications" USING btree ("user_id","identity_id");--> statement-breakpoint
+CREATE INDEX "training_exercises_user_id_identity_id_index" ON "training_exercises" USING btree ("user_id","identity_id");--> statement-breakpoint
+CREATE INDEX "training_focuses_user_id_identity_id_index" ON "training_focuses" USING btree ("user_id","identity_id");--> statement-breakpoint
+CREATE INDEX "goals_user_id_identity_id_index" ON "goals" USING btree ("user_id","identity_id");--> statement-breakpoint
+CREATE INDEX "jobs_user_id_identity_id_index" ON "jobs" USING btree ("user_id","identity_id");--> statement-breakpoint
+CREATE INDEX "coaching_notes_user_id_identity_id_index" ON "coaching_notes" USING btree ("user_id","identity_id");--> statement-breakpoint
+CREATE INDEX "mistake_patterns_user_id_identity_id_index" ON "mistake_patterns" USING btree ("user_id","identity_id");--> statement-breakpoint
+CREATE INDEX "coaching_profiles_user_id_identity_id_index" ON "coaching_profiles" USING btree ("user_id","identity_id");--> statement-breakpoint
+CREATE INDEX "training_sets_user_id_identity_id_index" ON "training_sets" USING btree ("user_id","identity_id");

@@ -1,0 +1,12 @@
+[Event "Fixture Rapid"]
+[Site "Chess.com"]
+[Date "2026.09.01"]
+[UTCDate "2026.09.01"]
+[UTCTime "12:00:00"]
+[White "fixture-white"]
+[Black "fixture-opponent"]
+[Result "0-1"]
+[TimeControl "600+5"]
+[Termination "fixture-opponent won by checkmate"]
+
+1. f3 {[%clk 0:10:02]} e5 {[%clk 0:10:03]} 2. g4 {[%clk 0:10:05]} Qh4# {[%clk 0:10:05]} 0-1
