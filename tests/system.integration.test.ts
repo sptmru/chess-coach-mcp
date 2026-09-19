@@ -297,6 +297,10 @@ async function oauth(email: string) {
   });
   const auth = await fetch(base + '/authorize?' + params);
   expect(auth.status).toBe(200);
+  expect(auth.headers.get('referrer-policy')).toBe('same-origin');
+  expect(auth.headers.get('content-security-policy')).toContain(
+    `form-action 'self' ${new URL(callback).origin}`,
+  );
   const html = await auth.text();
   const requestId = /name="requestId" value="([^"]+)"/.exec(html)![1],
     csrf = /name="csrf" value="([^"]+)"/.exec(html)![1];
@@ -425,12 +429,17 @@ describe.sequential('Remote MCP OAuth and tenant authorization', () => {
       }),
     });
     expect(reg.status).toBe(400);
-    const response = await fetch(base + '/mcp', {
-      method: 'POST',
-      headers: { origin: 'https://attacker.test', 'content-type': 'application/json' },
-      body: '{}',
-    });
-    expect(response.status).toBe(403);
+    for (const path of ['/mcp', '/', '/consent']) {
+      for (const origin of ['https://attacker.test', 'null']) {
+        const response = await fetch(base + path, {
+          method: 'POST',
+          headers: { origin, 'content-type': 'application/json' },
+          body: '{}',
+        });
+        expect(response.status).toBe(403);
+        expect(await response.json()).toEqual({ error: 'untrusted_origin' });
+      }
+    }
   });
 });
 

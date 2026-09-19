@@ -124,7 +124,15 @@ export class AuthProvider implements OAuthServerProvider {
       path: '/consent',
     });
     res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('Referrer-Policy', 'no-referrer');
+    // no-referrer makes browser form POSTs send Origin: null and fail our origin check.
+    // Keep the origin for /consent without sending the authorization URL to the client.
+    res.setHeader('Referrer-Policy', 'same-origin');
+    // Browsers also apply form-action to the redirect from /consent to the client.
+    // authorize() only receives a redirect URI already validated by the OAuth router.
+    res.setHeader(
+      'Content-Security-Policy',
+      `default-src 'none'; base-uri 'none'; form-action 'self' ${new URL(params.redirectUri).origin}; frame-ancestors 'none'`,
+    );
     res
       .type('html')
       .send(
