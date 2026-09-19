@@ -197,9 +197,12 @@ export class AnalysisService {
     limit = 20,
     offset = 0,
     detail: 'summary' | 'standard' | 'full' = 'summary',
+    compatibleOnly = false,
   ) {
     const { color, game } = await this.games.require(userId, identityId, gameId);
-    const run = await this.latest(gameId, runId);
+    const run = compatibleOnly
+      ? await this.latestCompatible(game, runId)
+      : await this.latest(gameId, runId);
     if (!run) return { items: [], warning: 'Game has not been analyzed' };
     const positions = await this.db
       .select({ position: criticalPositions, facts: moveAnalyses.facts })
@@ -258,6 +261,31 @@ export class AnalysisService {
       })),
       nextOffset: positions.length > limit ? offset + limit : null,
     };
+  }
+  async latestCompatible(game: { id: string; contentHash: string }, runId?: string) {
+    const candidates = await this.db
+      .select()
+      .from(analysisRuns)
+      .where(
+        and(
+          eq(analysisRuns.gameId, game.id),
+          eq(analysisRuns.status, 'completed'),
+          eq(analysisRuns.engineVersion, this.engine.version),
+          eq(analysisRuns.algorithmVersion, ALGORITHM_VERSION),
+          runId ? eq(analysisRuns.id, runId) : undefined,
+        ),
+      )
+      .orderBy(desc(analysisRuns.createdAt), desc(analysisRuns.id));
+    // Keep the run's depth/MultiPV, but require the current engine, algorithm and runtime settings.
+    return candidates.find(
+      (run) =>
+        run.fingerprint ===
+        hash({
+          game: game.id,
+          contentHash: game.contentHash,
+          compatibility: this.compatibility(run.config),
+        }),
+    );
   }
   version(run: typeof analysisRuns.$inferSelect) {
     return {

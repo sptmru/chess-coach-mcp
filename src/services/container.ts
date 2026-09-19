@@ -3,6 +3,7 @@ import type { Config } from '../config.js';
 import { ChessComClient } from '../chesscom/client.js';
 import { EnginePool } from '../stockfish/engine.js';
 import { JobQueue } from '../jobs/queue.js';
+import { analysisHandler } from '../jobs/analysis.js';
 import { IdentityService } from './identity.js';
 import { GameService } from './games.js';
 import { AnalysisService } from './analysis.js';
@@ -35,25 +36,8 @@ export function createServices(
       c.checkCancelled,
     ),
   );
-  jobs.register('analysis', async (j, c) => {
-    const ids = j.payload.gameIds as string[],
-      options = analysis.config(j.payload.options as { depth: number; multiPv: number });
-    const runs = [];
-    let failed = 0;
-    for (const id of ids) {
-      await c.checkCancelled();
-      try {
-        runs.push(await analysis.analyze(j.userId, j.identityId, id, options, c.checkCancelled));
-      } catch (e) {
-        if (e instanceof DomainError && ['cancelled', 'interrupted'].includes(e.code)) throw e;
-        failed++;
-      }
-      await c.progress(runs.length, ids.length, failed);
-    }
-    if (!runs.length && failed)
-      throw new DomainError('analysis_failed', 'All selected games failed analysis');
-    return { runs, failed, partial: failed > 0 };
-  });
+  jobs.register('analysis', analysisHandler(analysis, semantics));
+  jobs.register('analysis_classification', analysisHandler(analysis, semantics));
   jobs.register('classification', async (j, c) => {
     const ids = j.payload.positionIds as string[];
     const results = [];

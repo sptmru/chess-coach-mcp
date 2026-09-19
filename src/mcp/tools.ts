@@ -105,7 +105,7 @@ export function toolDefinitions(s: Services) {
       ctx.userId,
       i.id,
       'analysis',
-      { gameIds, options: o },
+      { gameIds, options: { depth: o.depth, multiPv: o.multiPv } },
       hash({
         gameIds: [...gameIds].sort(),
         compatibility: s.analysis.compatibility(o),
@@ -256,6 +256,75 @@ export function toolDefinitions(s: Services) {
     (a, c) =>
       s.analysis.critical(c.userId, a.identityId, a.gameId, a.runId, a.limit, a.offset, a.detail),
   );
+  const batch = {
+    ...identity,
+    since: date.optional(),
+    until: date.optional(),
+    timeControl: z.enum(['rapid', 'blitz', 'bullet', 'daily']).default('rapid'),
+    maxGames: z
+      .number()
+      .int()
+      .min(1)
+      .max(s.config.MAX_BATCH_ANALYSIS_GAMES)
+      .default(s.config.MAX_BATCH_ANALYSIS_GAMES)
+      .describe('Safety cap, not a page size. If more games match, narrow the date range.'),
+    ...options,
+    retry: z.boolean().default(false),
+  };
+  const enqueueBatch = async (
+    a: z.output<z.ZodObject<typeof batch>>,
+    c: RequestContext,
+    classification?: { provider: string; model: string; positionsPerGame: number },
+  ) => {
+    const i = await s.identity.require(c.userId, a.identityId);
+    const gameIds = await s.games.selectBatch(
+      c.userId,
+      i.id,
+      {
+        since: a.since,
+        until: a.until,
+        timeControl: a.timeControl,
+      },
+      a.maxGames,
+    );
+    if (!gameIds.length) return { skipped: 'no_matching_games', selected: 0 };
+    const o = { depth: a.depth, multiPv: a.multiPv };
+    const job = await s.jobs.enqueue(
+      c.userId,
+      i.id,
+      classification ? 'analysis_classification' : 'analysis',
+      { gameIds, options: o, ...classification },
+      hash({
+        gameIds: [...gameIds].sort(),
+        compatibility: s.analysis.compatibility(o),
+        ...(classification ? { classification } : {}),
+        retry: a.retry ? randomUUID() : undefined,
+      }),
+      c.correlationId,
+    );
+    return { ...job, selected: gameIds.length };
+  };
+  add(
+    'analyze_games',
+    'Analyze all imported games matching since/until (inclusive) and timeControl in one background job. Default cap 500, configurable by operator; overflow is rejected, never truncated. Poll get_job. Compatible analyses are reused; retry creates a new job.',
+    batch,
+    (a, c) => enqueueBatch(a, c),
+    false,
+  );
+  add(
+    'analyze_and_classify_games',
+    'Analyze matching imported games, then classify your grouped positions from each exact run in one background job. Explicit opt-in to the configured reasoner. Poll get_job for per-game progress/results; cancel_job stops at safe boundaries. Reuses completed work.',
+    { ...batch, ...provider, positionsPerGame: z.number().int().min(1).max(20).default(10) },
+    (a, c) => {
+      const selected = s.semantics.resolveReasoner(a.provider, a.model);
+      return enqueueBatch(a, c, {
+        provider: selected.provider,
+        model: selected.model,
+        positionsPerGame: a.positionsPerGame,
+      });
+    },
+    false,
+  );
   add(
     'analyze_position',
     'Analyze arbitrary valid FEN with bounded MultiPV. Evaluations are canonical White perspective.',
@@ -325,10 +394,11 @@ export function toolDefinitions(s: Services) {
   );
   add(
     'classify_game_positions',
-    'Queue bounded classification of a game’s grouped positions using the server-configured provider and model. Omit provider and model for normal use.',
+    'Queue bounded classification of a game’s grouped positions using the server-configured provider and model. Returns skipped=no_compatible_analysis and requiresAnalysis=true if analysis is missing or incompatible; use analyze_and_classify_games. Omit provider and model for normal use.',
     {
       ...identity,
       gameId: uuid,
+      runId: uuid.optional(),
       ...provider,
       count: z.number().int().min(1).max(20).default(10),
       retry: z.boolean().default(false),
@@ -336,9 +406,28 @@ export function toolDefinitions(s: Services) {
     async (a, c) => {
       const selected = s.semantics.resolveReasoner(a.provider, a.model);
       const i = await s.identity.require(c.userId, a.identityId);
-      const critical = await s.analysis.critical(c.userId, i.id, a.gameId, undefined, a.count);
+      const critical = await s.analysis.critical(
+        c.userId,
+        i.id,
+        a.gameId,
+        a.runId,
+        a.count,
+        0,
+        'summary',
+        true,
+      );
+      if (!critical.runId)
+        return { gameId: a.gameId, skipped: 'no_compatible_analysis', requiresAnalysis: true };
+      if (!critical.items.length)
+        return {
+          gameId: a.gameId,
+          runId: critical.runId,
+          skipped: 'no_critical_positions',
+          requiresAnalysis: false,
+          classified: 0,
+        };
       const positionIds = critical.items.map((p) => p.id);
-      return s.jobs.enqueue(
+      const job = await s.jobs.enqueue(
         c.userId,
         i.id,
         'classification',
@@ -351,6 +440,13 @@ export function toolDefinitions(s: Services) {
         }),
         c.correlationId,
       );
+      return {
+        ...job,
+        gameId: a.gameId,
+        runId: critical.runId,
+        selected: positionIds.length,
+        nextOffset: critical.nextOffset ?? null,
+      };
     },
     false,
   );
@@ -489,7 +585,7 @@ export function createMcpServer(services: Services, context: RequestContext) {
     { name: 'chess-coach-mcp', version: '0.1.0' },
     {
       instructions:
-        'Associate a public Chess.com username, sync games, then analyze. Poll job IDs. Reports are compact and include partial-data warnings. Semantic labels are hypotheses. Never reveal an exercise solution until requested.',
+        'Associate a public Chess.com username, sync games, then analyze. Use analyze_games for a date range, or analyze_and_classify_games to run both stages in one job. Poll job IDs. If classify_game_positions requiresAnalysis, analyze first. Reports are compact and include partial-data warnings. Semantic labels are hypotheses. Never reveal an exercise solution until requested.',
     },
   );
   for (const t of toolDefinitions(services))
@@ -508,6 +604,7 @@ export function createMcpServer(services: Services, context: RequestContext) {
             'get_player_profile',
             'classify_critical_position',
             'classify_game_positions',
+            'analyze_and_classify_games',
           ].includes(t.name),
         },
         _meta: { securitySchemes: [{ type: 'oauth2', scopes: ['chess:coach'] }] },

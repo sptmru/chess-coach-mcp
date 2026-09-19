@@ -133,6 +133,17 @@ describe.sequential('PostgreSQL + Stockfish acceptance', () => {
     const other = (await s.games.list(u1, i1)).items[0].id;
     await expect(s.games.get(u2, i2, other)).rejects.toThrow('not accessible');
   });
+  it('reports missing analysis without creating an empty classification job', async () => {
+    const tool = toolDefinitions(s).find((t) => t.name === 'classify_game_positions')!;
+    expect(await tool.execute({ gameId: g1 }, { userId: u1, correlationId: randomUUID() })).toEqual(
+      {
+        gameId: g1,
+        skipped: 'no_compatible_analysis',
+        requiresAnalysis: true,
+      },
+    );
+    expect(await s.db.select().from(jobs)).toHaveLength(0);
+  });
   it('analyzes actual Stockfish, reuses compatible runs globally and keeps versions separate', async () => {
     const options = { depth: 8, multiPv: 2 };
     const [a, b] = await Promise.all([
@@ -152,6 +163,46 @@ describe.sequential('PostgreSQL + Stockfish acceptance', () => {
     const position = await s.analysis.position(u1, i1, critical.items[0].id);
     expect(position.move.cpl === null || position.move.cpl >= 0).toBe(true);
     await expect(s.analysis.position(u2, i2, critical.items[0].id)).rejects.toThrow();
+  });
+  it('rejects obsolete runs while finding an older compatible run and preserving its depth', async () => {
+    const { game } = await s.games.require(u1, i1, g1);
+    const compatible = await s.analysis.latestCompatible(game);
+    expect(compatible?.config.depth).toBe(9);
+    const [obsolete] = await s.db
+      .insert(analysisRuns)
+      .values({
+        gameId: g1,
+        fingerprint: randomUUID(),
+        engineVersion: s.engine.version,
+        algorithmVersion: 'obsolete-fixture',
+        config: s.analysis.metadata({ depth: 12, multiPv: 3 }),
+        status: 'completed',
+        completedAt: new Date(),
+      })
+      .returning();
+    try {
+      expect((await s.analysis.latestCompatible(game))?.id).toBe(compatible?.id);
+      const tool = toolDefinitions(s).find((t) => t.name === 'classify_game_positions')!;
+      expect(
+        await tool.execute(
+          { gameId: g1, runId: obsolete.id },
+          { userId: u1, correlationId: randomUUID() },
+        ),
+      ).toMatchObject({ skipped: 'no_compatible_analysis', requiresAnalysis: true });
+      expect(
+        await s.analysis.latestCompatible({ ...game, contentHash: 'changed-fixture' }),
+      ).toBeUndefined();
+      // Runtime-setting changes are incompatible even if engine and algorithm names match.
+      const previousHash = s.engine.binaryHash;
+      s.engine.binaryHash = 'changed-binary-fixture';
+      try {
+        expect(await s.analysis.latestCompatible(game)).toBeUndefined();
+      } finally {
+        s.engine.binaryHash = previousHash;
+      }
+    } finally {
+      await s.db.delete(analysisRuns).where(eq(analysisRuns.id, obsolete.id));
+    }
   });
   it('compares arbitrary moves and returns bounded MultiPV without corrupting perspective', async () => {
     const result = await s.engine.analyze(new Chess().fen(), { depth: 8, multiPv: 2 });
@@ -255,6 +306,46 @@ describe.sequential('PostgreSQL + Stockfish acceptance', () => {
       await sleep(100);
     }
     expect(await s.jobs.get(u1, job.id)).toMatchObject({ state: 'succeeded', completed: 1 });
+  });
+  it('runs and retries a date-filtered pipeline through the persistent queue, and cancels a queued batch', async () => {
+    const tool = toolDefinitions(s).find((t) => t.name === 'analyze_and_classify_games')!;
+    const ctx = { userId: u1, correlationId: randomUUID() };
+    const args = {
+      since: '2026-09-02T00:00:00Z',
+      until: '2026-09-03T23:59:59Z',
+      depth: 9,
+      multiPv: 2,
+    };
+    const queued = (await tool.execute(args, ctx)) as { id: string; selected: number };
+    expect(queued.selected).toBe(2);
+    await expect(s.jobs.get(u2, queued.id)).rejects.toThrow();
+    const wait = async (id: string) => {
+      for (let n = 0; n < 100; n++) {
+        const job = await s.jobs.get(u1, id);
+        if (['succeeded', 'failed', 'cancelled'].includes(job.state)) return job;
+        await sleep(100);
+      }
+      throw new Error('Fixture batch did not finish');
+    };
+    const completed = await wait(queued.id);
+    expect(completed).toMatchObject({
+      state: 'succeeded',
+      total: 2,
+      completed: 2,
+      failed: 0,
+      result: { analyzed: 2, partial: false },
+    });
+    expect((completed.result as { classified: number }).classified).toBeGreaterThan(0);
+    expect((completed.result as { runs: { reused: boolean }[] }).runs.every((r) => r.reused)).toBe(
+      true,
+    );
+    expect(await tool.execute(args, ctx)).toMatchObject({ id: queued.id });
+    const retry = (await tool.execute({ ...args, retry: true }, ctx)) as { id: string };
+    expect(retry.id).not.toBe(queued.id);
+    expect(await wait(retry.id)).toMatchObject({ state: 'succeeded', result: completed.result });
+    const cancel = (await tool.execute({ ...args, retry: true }, ctx)) as { id: string };
+    await s.jobs.cancel(u1, cancel.id);
+    expect(await wait(cancel.id)).toMatchObject({ state: 'cancelled' });
   });
   it('deleting an association cascades personal state without deleting shared games or analysis', async () => {
     const disposable = await s.identity.associate(u2, 'fixture-white');
@@ -373,6 +464,13 @@ describe.sequential('Remote MCP OAuth and tenant authorization', () => {
     );
     const list = await client.listTools();
     expect(list.tools.length).toBe(toolDefinitions(s).length);
+    expect(
+      list.tools.find((t) => t.name === 'analyze_and_classify_games')?.annotations,
+    ).toMatchObject({ readOnlyHint: false, openWorldHint: true });
+    expect(list.tools.find((t) => t.name === 'analyze_games')?.annotations).toMatchObject({
+      readOnlyHint: false,
+      openWorldHint: false,
+    });
     const me = await client.callTool({ name: 'get_me', arguments: {} });
     expect(JSON.stringify(me)).toContain(u2);
     expect(JSON.stringify(me)).not.toContain(u1);

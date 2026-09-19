@@ -231,7 +231,7 @@ describe('public contracts', () => {
       }),
     );
     const defs = toolDefinitions(s);
-    expect(defs.length).toBe(44);
+    expect(defs.length).toBe(46);
     expect(
       defs
         .find((t) => t.name === 'analyze_position')!

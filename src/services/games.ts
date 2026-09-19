@@ -216,6 +216,32 @@ export class GameService {
     if (!row) throw missing();
     return { ...row, identity: i };
   }
+  async selectBatch(
+    userId: string,
+    identityId: string,
+    filters: Pick<GameFilters, 'since' | 'until' | 'timeControl'>,
+    maxGames: number,
+  ) {
+    if (filters.since && filters.until && new Date(filters.since) > new Date(filters.until))
+      throw new DomainError('invalid_period', 'since must be before until');
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.list(userId, identityId, {
+        ...filters,
+        cursor,
+        limit: Math.min(100, maxGames - ids.length + 1),
+      });
+      ids.push(...page.items.map((g) => g.id));
+      if (ids.length > maxGames || (ids.length === maxGames && page.nextCursor))
+        throw new DomainError(
+          'limits',
+          `More than ${maxGames} games match; narrow since/until or increase maxGames within the server limit`,
+        );
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    return ids;
+  }
   async get(
     userId: string,
     identityId: string | undefined,

@@ -28,14 +28,18 @@ describe('classification provider selection', () => {
     'advertises the server default for %s in both MCP schemas',
     (provider) => {
       const tools = setup(provider);
-      for (const name of ['classify_critical_position', 'classify_game_positions']) {
+      for (const name of [
+        'classify_critical_position',
+        'classify_game_positions',
+        'analyze_and_classify_games',
+      ]) {
         const schema = z.toJSONSchema(tools.find((t) => t.name === name)!.schema, { io: 'input' });
         expect(schema.properties?.provider).toMatchObject({
           enum: provider === 'jev' ? ['mock', 'jev'] : ['mock'],
           default: provider === 'jev' ? 'jev' : 'mock',
         });
-        expect(schema.required).not.toContain('provider');
-        expect(schema.required).not.toContain('model');
+        expect(schema.required ?? []).not.toContain('provider');
+        expect(schema.required ?? []).not.toContain('model');
       }
     },
   );
@@ -65,6 +69,7 @@ describe('classification provider selection', () => {
         id: 'fixture-identity',
       } as Awaited<ReturnType<Services['identity']['require']>>);
       vi.spyOn(services.analysis, 'critical').mockResolvedValue({
+        runId: gameId,
         items: [{ id: positionId }],
       } as Awaited<ReturnType<Services['analysis']['critical']>>);
       const enqueue = vi
@@ -82,6 +87,47 @@ describe('classification provider selection', () => {
       const implicitKey = enqueue.mock.calls[0][4];
       await tool.execute({ gameId, provider, model }, ctx);
       expect(enqueue.mock.calls[1][4]).toBe(implicitKey);
+    },
+  );
+
+  it.each([
+    {
+      critical: { items: [], warning: 'Game has not been analyzed' },
+      skipped: 'no_compatible_analysis',
+      requiresAnalysis: true,
+    },
+    {
+      critical: { items: [], runId: gameId, nextOffset: null },
+      skipped: 'no_critical_positions',
+      requiresAnalysis: false,
+    },
+  ])(
+    'returns $skipped without queueing an empty job',
+    async ({ critical, skipped, requiresAnalysis }) => {
+      const tool = setup().find((t) => t.name === 'classify_game_positions')!;
+      vi.spyOn(services.identity, 'require').mockResolvedValue({
+        id: 'fixture-identity',
+      } as Awaited<ReturnType<Services['identity']['require']>>);
+      const positions = vi
+        .spyOn(services.analysis, 'critical')
+        .mockResolvedValue(critical as Awaited<ReturnType<Services['analysis']['critical']>>);
+      const enqueue = vi.spyOn(services.jobs, 'enqueue');
+      expect(await tool.execute({ gameId }, ctx)).toMatchObject({
+        gameId,
+        skipped,
+        requiresAnalysis,
+      });
+      expect(positions).toHaveBeenCalledWith(
+        ctx.userId,
+        'fixture-identity',
+        gameId,
+        undefined,
+        10,
+        0,
+        'summary',
+        true,
+      );
+      expect(enqueue).not.toHaveBeenCalled();
     },
   );
 

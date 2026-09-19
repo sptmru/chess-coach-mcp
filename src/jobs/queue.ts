@@ -5,7 +5,7 @@ import { jobs, users } from '../database/schema.js';
 import { DomainError, hash, log, metric, missing, safeError } from '../utils/core.js';
 export type Job = typeof jobs.$inferSelect;
 export type JobControl = {
-  progress: (done: number, total: number, failed?: number) => Promise<void>;
+  progress: (done: number, total: number, failed?: number, result?: unknown) => Promise<void>;
   checkCancelled: () => Promise<void>;
 };
 export type JobHandler = (job: Job, control: JobControl) => Promise<unknown>;
@@ -162,9 +162,12 @@ export class JobQueue {
       if (!handler) throw new Error('missing handler');
       const result = await handler(job, {
         checkCancelled,
-        progress: async (completed, total, failed = 0) => {
+        progress: async (completed, total, failed = 0, result) => {
           await checkCancelled();
-          await this.db.update(jobs).set({ completed, total, failed }).where(eq(jobs.id, job.id));
+          await this.db
+            .update(jobs)
+            .set({ completed, total, failed, ...(result === undefined ? {} : { result }) })
+            .where(eq(jobs.id, job.id));
         },
       });
       await checkCancelled();

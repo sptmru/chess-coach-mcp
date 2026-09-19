@@ -77,7 +77,31 @@ Call these tools in sequence through your client:
 {"name":"get_coaching_context","arguments":{}}
 ```
 
-`sync_games`, `analyze_game`, `analyze_recent_games`, and `classify_game_positions` return a job ID. Poll the job until its state is `succeeded`, `failed`, or `cancelled`; a nonzero `failed` count indicates partial results even when the job succeeds. `cancel_job` cancels work at the next safe boundary. Repeating a compatible analysis request reuses the result; `retry: true` creates a new job after a failure. Changing depth/MultiPV creates a separate analysis version.
+`sync_games`, `analyze_game`, `analyze_recent_games`, `analyze_games`, `analyze_and_classify_games`, and `classify_game_positions` return a job ID when work is queued. Poll the job until its state is `succeeded`, `failed`, or `cancelled`; a nonzero `failed` count indicates partial results even when the job succeeds. `cancel_job` cancels work at the next safe boundary. Repeating a compatible analysis request reuses the result; `retry: true` creates a new job after a failure. Changing depth/MultiPV creates a separate analysis version.
+
+For a whole period, sync first, then submit one background job:
+
+```json
+{
+  "name": "analyze_and_classify_games",
+  "arguments": {
+    "since": "2026-09-01T00:00:00Z",
+    "until": "2026-09-19T23:59:59Z",
+    "timeControl": "rapid",
+    "depth": 12,
+    "multiPv": 3,
+    "positionsPerGame": 10
+  }
+}
+```
+
+Use `analyze_games` with the same filters and engine options for Stockfish only (omit `positionsPerGame`). Dates are inclusive ISO timestamps. Both tools snapshot all matching imported game IDs, paginate internally, and consume **one** of the five pending-job slots, including for 56 games. `maxGames` defaults to `MAX_BATCH_ANALYSIS_GAMES` (500; operator may lower it). If more games match, the request fails before queueing and asks for a narrower period; it never silently truncates. An empty selection returns `skipped: "no_matching_games"` without a job. The existing `MAX_ANALYSIS_GAMES` limit still applies to `analyze_recent_games`.
+
+The initial response includes `selected`; `get_job` reports `total` once the worker starts. `completed` counts games that finished all requested stages, and `failed` counts games with analysis or classification errors. `result.results` contains each processed `gameId`, `runId`, analysis `reused` flag, classification counts, and safe errors. Progress/results are persisted after each game, including before an all-failed job stops. Partial failures do not stop later games. Restart recovery and `retry: true` reuse completed analyses and classifications. Games run sequentially within a batch, using the existing Stockfish pool; this removes manual orchestration without promising faster engine computation.
+
+The pipeline classifies your side's grouped positions from the exact analysis run it produced/reused, using the configured provider/model unless overridden. `positionsPerGame` defaults to 10 (maximum 20); a per-game `nextOffset` indicates additional positions beyond this cap. Remote classification is explicitly requested by choosing the pipeline and may incur provider costs.
+
+`classify_game_positions` returns `skipped: "no_compatible_analysis", requiresAnalysis: true` if no completed run matches the current engine, algorithm, runtime settings, and game content. It preserves the selected run's depth/MultiPV; they need not equal the server defaults. Optional `runId` pins a specific compatible run. An analyzed game without critical positions returns `skipped: "no_critical_positions", requiresAnalysis: false, classified: 0`. Neither case creates an empty job. Successful queue responses include `gameId`, `runId`, `selected`, and `nextOffset`.
 
 A typical exercise response intentionally omits the solution:
 
@@ -94,7 +118,7 @@ A typical exercise response intentionally omits the solution:
 
 Default responses omit full PGNs, complete move arrays, and raw provider responses. `get_game` accepts `includePgn` and `includeMoves`. Game lists use cursors; notes, positions, and history use limit/offset pagination. Reports are capped at 100 games and disclose truncation, incompatible analysis, and unanalyzed games.
 
-The complete catalog of 44 tools is in [src/mcp/tools.ts](src/mcp/tools.ts). Architecture, evaluation conventions, and limitations are documented in [docs/architecture.md](docs/architecture.md).
+The complete catalog of 46 tools is in [src/mcp/tools.ts](src/mcp/tools.ts). Architecture, evaluation conventions, and limitations are documented in [docs/architecture.md](docs/architecture.md).
 
 ## Semantic providers
 
